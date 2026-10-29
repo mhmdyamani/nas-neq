@@ -455,7 +455,7 @@ async def put_settings(body: dict, _=A):
         raise HTTPException(400, "Contactless delivery needs delivery enabled and instructions entered")
     if "payments" in body:
         cur["payments"]["cash"]["enabled"] = bool(body["payments"].get("cash", {}).get("enabled"))
-    for f in ("accepting_orders", "notify_customers"):
+    for f in ("accepting_orders", "notify_customers", "daily_summary"):
         if f in body:
             cur[f] = bool(body[f])
     if "notify_email" in body:

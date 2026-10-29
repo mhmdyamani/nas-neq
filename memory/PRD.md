@@ -25,6 +25,11 @@ User choices: online payments later; email and password login with owner admin =
 - Generated all 49 AI menu images.
 - Testing: iteration 1 passed 17/17 backend tests and all tested frontend flows. Afterwards I fixed the image endpoint blocking other requests, made the pre-order capacity check atomic, stopped the Clerk lookup from blocking requests, and added email retries.
 
+## Implemented (2026-10-29, later the same day)
+- Nightly order summary email. It runs every night at 12:30 AM Manila time (`.emergent/crons.yml` calls `POST /api/cron/daily-summary`, which checks WEBHOOK_CRON_SECRET and runs once per day).
+- The email covers the day just ended: order counts by status, gross order value, net sales, payments received, outstanding, top items, the list of orders, low-stock and sold-out items, and orders still pending review. It goes to the alert email set in Settings.
+- Settings has an on/off switch for the summary and an "Email today's summary now" button.
+
 ## Backlog
 - P0 (owner to confirm): the 16 items on the Flags page — made-to-order prices, flavors, delivery settings, payment method, hours.
 - P1: connect an online payment provider; add an outbox to retry failed emails later.

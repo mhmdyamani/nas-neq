@@ -73,6 +73,7 @@ def default_settings():
         "hours_text": "9AM–12AM",
         "notify_email": os.environ.get("ADMIN_EMAIL", "").split(",")[0].strip(),
         "notify_customers": True,
+        "daily_summary": True,
     }
 
 
@@ -83,6 +84,8 @@ async def seed():
     await db.orders.create_index("track_token", unique=True)
     await db.orders.create_index("idempotency_key", unique=True)
     await db.users.create_index("user_id", unique=True)
+    await db.cron_runs.create_index("key", unique=True)
+    await db.settings.update_one({"id": "main", "daily_summary": {"$exists": False}}, {"$set": {"daily_summary": True}})
     if not await db.settings.find_one({"id": "main"}):
         await db.settings.insert_one(default_settings())
     if await db.products.count_documents({}) == 0:

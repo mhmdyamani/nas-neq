@@ -18,6 +18,11 @@ export default function SettingsPanel() {
   const { data } = useLoad(() => api("get", "/admin/settings"), []);
   const [s, setS] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const sendNow = async () => {
+    setSending(true);
+    try { await api("post", "/admin/daily-summary/send"); toast.success("Summary emailed"); } catch (e) { toast.error(errMsg(e)); } finally { setSending(false); }
+  };
   useEffect(() => { if (data) setS(data); }, [data]);
   if (!s) return <p>Loading…</p>;
   const sv = (k, f, v) => setS({ ...s, services: { ...s.services, [k]: { ...s.services[k], [f]: v } } });
@@ -32,6 +37,8 @@ export default function SettingsPanel() {
       <Card className="p-5 mb-4"><p className="font-medium mb-2">Online ordering</p>
         <Row label="Accept online orders" checked={s.accepting_orders} onChange={(v) => setS({ ...s, accepting_orders: v })} testid="setting-accepting-orders" />
         <Row label="Email customers when status changes" hint="Only customers who entered an email" checked={s.notify_customers} onChange={(v) => setS({ ...s, notify_customers: v })} testid="setting-notify-customers" />
+        <Row label="Nightly order summary email" hint="Sent around 12:30 AM (Manila) to the alert email below: the day's orders, sales and low-stock items" checked={s.daily_summary} onChange={(v) => setS({ ...s, daily_summary: v })} testid="setting-daily-summary" />
+        <div className="pb-2"><Btn type="button" variant="light" disabled={sending} onClick={sendNow} data-testid="send-summary-now-btn">{sending ? "Sending…" : "Email today's summary now"}</Btn></div>
         <Field id="st-email" label="Send new order / inquiry alerts to"><Input id="st-email" type="email" value={s.notify_email} onChange={(e) => setS({ ...s, notify_email: e.target.value })} data-testid="setting-notify-email" /></Field>
         <div className="mt-3"><Field id="st-hours" label="Opening hours text"><Input id="st-hours" value={s.hours_text} onChange={(e) => setS({ ...s, hours_text: e.target.value })} data-testid="setting-hours" /></Field></div>
       </Card>

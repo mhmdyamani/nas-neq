@@ -417,6 +417,8 @@ app.include_router(api)
 app.include_router(clerk_router)
 from admin import admin_router  # noqa: E402
 app.include_router(admin_router)
+from summary import summary_router  # noqa: E402
+app.include_router(summary_router)
 
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
