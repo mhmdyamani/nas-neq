@@ -70,7 +70,7 @@ function Shell() {
       {!isAdmin && <Footer />}
       <CartSheet />
       <ProductDialog />
-      <Toaster position="top-center" richColors />
+      <Toaster position="bottom-center" richColors />
     </>
   );
 }

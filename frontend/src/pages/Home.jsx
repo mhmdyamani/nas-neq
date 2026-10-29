@@ -48,9 +48,9 @@ function Intro() {
         </div>
         <Reveal className="lg:col-span-6">
           <p className="eyebrow">Nas&Neq</p>
-          <h2 className="font-display text-4xl sm:text-5xl mt-4 leading-[1.05] text-[var(--espresso)]">A neighbourhood bakery & café.</h2>
+          <h2 className="font-display text-4xl sm:text-5xl mt-4 leading-[1.05] text-[var(--espresso)]">A bakery & café in Culiat.</h2>
           <p className="mt-6 text-[var(--espresso)]/80 leading-relaxed max-w-lg">
-            Nas&Neq is a bakery and café serving espresso and iced coffee, blended drinks, crispy chicken wings and poppers, waffles, halo-halo and made-to-order bakes. Drop by for a coffee, stay for a meal, or take something sweet home.
+            Nas&Neq is a bakery and café serving espresso and iced coffee, blended drinks, chicken wings and poppers, waffles, halo-halo and made-to-order bakes. Drop by for a coffee, stay for a meal, or take something sweet home.
           </p>
           <Link to="/our-story" className="mt-8 inline-flex items-center gap-2 font-medium" data-testid="intro-story-link">More about Nas&Neq <ArrowRight size={18} /></Link>
         </Reveal>

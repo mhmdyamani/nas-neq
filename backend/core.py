@@ -1,4 +1,5 @@
 import io
+import asyncio
 import os
 import re
 import uuid
@@ -70,7 +71,7 @@ async def current_member(user: dict = Depends(require_user)) -> dict:
     uid = user["user_id"]
     member = await db.users.find_one({"user_id": uid}, {"_id": 0})
     if member is None or not member.get("role"):
-        cu = _clerk_user(uid)
+        cu = await asyncio.to_thread(_clerk_user, uid)
         admins = {e.strip().lower() for e in os.environ.get("ADMIN_EMAIL", "").split(",") if e.strip()}
         emails = _verified_emails(cu)
         role = "admin" if any(e in admins for e in emails) else DEFAULT_ROLE
@@ -238,9 +239,13 @@ async def send_email(*, to: str, subject: str, html: str) -> dict:
     """Returns {"status": "sent"|"failed", ...}. Never raises: callers record the outcome."""
     try:
         _assert_safe_email(subject, html)
-        async with httpx.AsyncClient(timeout=30) as c:
-            resp = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send", headers={"X-Email-Key": EMAIL_KEY},
-                                json={"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME})
+        for attempt in range(4):
+            async with httpx.AsyncClient(timeout=30) as c:
+                resp = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send", headers={"X-Email-Key": EMAIL_KEY},
+                                    json={"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME})
+            if resp.status_code != 429 or attempt == 3:
+                break
+            await asyncio.sleep(5 * (attempt + 1) ** 2)
         resp.raise_for_status()
         return {"status": "sent", "id": resp.json().get("id"), "at": now_iso()}
     except httpx.HTTPStatusError as e:

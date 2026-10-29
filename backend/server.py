@@ -1,4 +1,5 @@
 import re
+import asyncio
 import secrets
 import logging
 from datetime import datetime, timedelta
@@ -65,7 +66,7 @@ async def image(path: str):
             not await db.image_drafts.find_one({"$or": [{"image_path": path}, {"thumb_path": path}]}):
         raise HTTPException(404)
     try:
-        data, ctype = get_object(path)
+        data, ctype = await asyncio.to_thread(get_object, path)
     except Exception:
         raise HTTPException(404)
     return Response(content=data, media_type=ctype, headers={"Cache-Control": "public, max-age=31536000, immutable"})
@@ -180,6 +181,11 @@ async def _release(reserved):
         await db.products.update_one({"id": pid}, {"$inc": {"stock": qty}})
 
 
+async def release_capacity(items):
+    for key, qty in items:
+        await db.preorder_capacity.update_one({"key": key}, {"$inc": {"used": -qty}})
+
+
 def _order_ref():
     return "NN-" + datetime.now(MANILA).strftime("%y%m%d") + "-" + secrets.token_hex(2).upper()
 
@@ -209,6 +215,7 @@ async def create_order(body: OrderIn, bg: BackgroundTasks, member=Depends(option
     if body.payment_method and not s["payments"].get(body.payment_method, {}).get("enabled"):
         raise HTTPException(400, "That payment method is not available.")
     pdate = None
+    cap_reserved = []
     if otype == "preorder":
         if not body.preorder_date:
             raise HTTPException(400, "Please choose a pre-order date.")
@@ -223,15 +230,20 @@ async def create_order(body: OrderIn, bg: BackgroundTasks, member=Depends(option
             earliest = manila_today() + timedelta(days=int(pre.get("lead_days") or 0))
             if pdate < earliest:
                 raise HTTPException(400, f"{ln['name']} needs at least {pre.get('lead_days') or 0} day(s) notice — earliest date is {earliest.isoformat()}.")
-            if pre.get("daily_capacity"):
-                agg = await db.orders.aggregate([
-                    {"$match": {"type": "preorder", "preorder_date": pdate.isoformat(), "status": {"$nin": ["rejected", "cancelled"]}}},
-                    {"$unwind": "$items"}, {"$match": {"items.product_id": ln["product_id"]}},
-                    {"$group": {"_id": None, "q": {"$sum": "$items.qty"}}}]).to_list(1)
-                used = agg[0]["q"] if agg else 0
-                if used + ln["qty"] > int(pre["daily_capacity"]):
-                    left = max(0, int(pre["daily_capacity"]) - used)
-                    raise HTTPException(409, f"Only {left} {ln['name']} can still be pre-ordered for {pdate.isoformat()}.")
+        for ln in lines:
+            pre = ln["_p"].get("preorder") or {}
+            if ln["is_packaging"] or not pre.get("daily_capacity"):
+                continue
+            key, cap = f"{ln['product_id']}|{pdate.isoformat()}", int(pre["daily_capacity"])
+            await db.preorder_capacity.update_one({"key": key}, {"$setOnInsert": {"key": key, "used": 0}}, upsert=True)
+            ok = await db.preorder_capacity.find_one_and_update({"key": key, "used": {"$lte": cap - ln["qty"]}},
+                                                                {"$inc": {"used": ln["qty"]}})
+            if not ok:
+                await release_capacity(cap_reserved)
+                cur = await db.preorder_capacity.find_one({"key": key}) or {}
+                left = max(0, cap - cur.get("used", 0))
+                raise HTTPException(409, f"Only {left} {ln['name']} can still be pre-ordered for {pdate.isoformat()}.")
+            cap_reserved.append([key, ln["qty"]])
     # Reserve stock atomically (regular orders only)
     reserved = []
     for ln in lines:
@@ -254,7 +266,7 @@ async def create_order(body: OrderIn, bg: BackgroundTasks, member=Depends(option
         "items": _clean(lines), "subtotal": subtotal, "delivery_fee": delivery_fee,
         "total": round(subtotal + delivery_fee, 2), "currency": "PHP",
         "payment_method": body.payment_method, "payment_status": "pending",
-        "status": "pending", "stock_reserved": bool(reserved),
+        "status": "pending", "stock_reserved": bool(reserved), "capacity_reserved": cap_reserved,
         "history": [{"kind": "status", "to": "pending", "at": ts, "by": "customer", "note": "Order request received"}],
         "notifications": [], "created_at": ts, "updated_at": ts,
     }
@@ -262,6 +274,7 @@ async def create_order(body: OrderIn, bg: BackgroundTasks, member=Depends(option
         await db.orders.insert_one(order)
     except DuplicateKeyError:
         await _release(reserved)
+        await release_capacity(cap_reserved)
         ex = await db.orders.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
         if not ex:
             raise HTTPException(500, "Could not create the order. Please try again.")

@@ -13,6 +13,7 @@ export function useCartCheck() {
   useEffect(() => {
     if (!cart.length) return setCheck({ lines: [], problems: [], subtotal: 0 });
     let stop = false;
+    setCheck((c) => (c ? { ...c, stale: true } : c));
     http.post("/cart/validate", { items: cart }).then((r) => !stop && setCheck(r.data)).catch(() => !stop && setCheck(null));
     return () => { stop = true; };
   }, [cart]);
@@ -62,14 +63,14 @@ export default function CartSheet() {
             </ul>
             {general.map((g) => <p key={g.message} className="text-sm text-red-700" role="alert">{g.message}</p>)}
             <div className="border-t border-[var(--beige)] pt-4 space-y-3">
-              <div className="flex justify-between text-lg"><span>Subtotal</span><span className="tabular" data-testid="cart-subtotal">{check ? peso(check.subtotal) : "…"}</span></div>
+              <div className="flex justify-between text-lg"><span>Subtotal</span><span className="tabular" data-testid="cart-subtotal">{check && !check.stale ? peso(check.subtotal) : "Updating…"}</span></div>
               <p className="text-xs text-[var(--taupe)]">No taxes or fees are added beyond the menu prices and any delivery fee set by Nas&Neq.</p>
               <Link
                 to="/checkout"
                 onClick={() => setCartOpen(false)}
                 data-testid="cart-checkout-btn"
-                aria-disabled={!check || check.problems.length > 0}
-                className={`flex h-12 items-center justify-center rounded-full font-medium ${check && !check.problems.length ? "bg-[var(--espresso)] text-[var(--cream)]" : "bg-[var(--beige)] text-[var(--taupe)] pointer-events-none"}`}
+                aria-disabled={!check || check.stale || check.problems.length > 0}
+                className={`flex h-12 items-center justify-center rounded-full font-medium ${check && !check.stale && !check.problems.length ? "bg-[var(--espresso)] text-[var(--cream)]" : "bg-[var(--beige)] text-[var(--taupe)] pointer-events-none"}`}
               >
                 Continue to checkout
               </Link>

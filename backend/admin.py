@@ -302,6 +302,11 @@ async def set_status(oid: str, body: StatusIn, bg: BackgroundTasks, admin=A):
     if not upd:
         raise HTTPException(409, "This order was changed by someone else — refresh and try again")
     if body.status in ("rejected", "cancelled"):
+        cap = await db.orders.find_one_and_update({"id": oid, "capacity_reserved.0": {"$exists": True}},
+                                                  {"$set": {"capacity_reserved": []}})
+        if cap:
+            for key, qty in cap["capacity_reserved"]:
+                await db.preorder_capacity.update_one({"key": key}, {"$inc": {"used": -qty}})
         rel = await db.orders.find_one_and_update({"id": oid, "stock_reserved": True}, {"$set": {"stock_reserved": False}})
         if rel:
             for it in rel["items"]:
@@ -356,7 +361,14 @@ async def reschedule(oid: str, body: RescheduleIn, admin=A):
         raise HTTPException(409, "Only open pre-orders can be rescheduled")
     h = {"kind": "reschedule", "from": o["preorder_date"], "to": body.date, "at": now_iso(),
          "by": admin.get("email") or admin["user_id"], "note": body.note, "public_note": f"Rescheduled to {body.date}"}
-    await db.orders.update_one({"id": oid}, {"$set": {"preorder_date": body.date, "updated_at": now_iso()}, "$push": {"history": h}})
+    moved = []
+    for key, qty in o.get("capacity_reserved") or []:
+        new_key = f"{key.split('|')[0]}|{body.date}"
+        await db.preorder_capacity.update_one({"key": key}, {"$inc": {"used": -qty}})
+        await db.preorder_capacity.update_one({"key": new_key}, {"$inc": {"used": qty}}, upsert=True)
+        moved.append([new_key, qty])
+    await db.orders.update_one({"id": oid}, {"$set": {"preorder_date": body.date, "capacity_reserved": moved, "updated_at": now_iso()},
+                                             "$push": {"history": h}})
     return await get_order(oid)
 
 

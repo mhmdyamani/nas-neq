@@ -1,0 +1,47 @@
+{
+  "summary": "First full E2E run for Nas&Neq. Backend: 17/17 pytest pass (menu data/prices, cart validation, idempotency, concurrent last-unit stock, restore-once, admin 401/403/200, status+payment workflow, analytics deltas, CSV, preorder rules incl. lead days and capacity, inquiries, favorites, delivery settings validation). Frontend: home hero scroll-scrub (down 0->36s, up ->14s), CTAs, no Emergent badge, menu (9 pills, 49 cards, ₱x.00, Price to be confirmed), product dialog (add vs inquire), quick-add, cart stepper/remove/subtotal/persistence, guest favorites, checkout (services enabled/disabled, validation, review, submit -> /track/{token}?new=1 with ref), MTO inquiry validation and success, 390px no overflow on 7 pages, admin via Clerk ticket (all 9 tabs, order status accept, menu price edit + image upload preview/use/save reflected publicly, settings delivery 400 then success, delivery selectable at checkout with fee, CSV download), customer: /admin denied, synced favorites survive reload, session persists. Found and FIXED one critical perf bug: /api/images was blocking the event loop.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/images/{path}", "issue": "FIXED BY TESTER: called the sync requests-based get_object() inside an async route, which blocked the whole event loop. When the menu page loaded ~49 images, every other API call (e.g. /api/cart/validate) waited 12-15s, so the cart subtotal stayed stale or at ₱0.00 after qty changes. Wrapped it in asyncio.to_thread; validate during an image burst went from 12.7s to 0.39s.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "send_email (owner/customer notifications)", "issue": "The Emergent email service returned 429 'email rate limit exceeded' after about 10 sends. Order NN-261029-8E8C and inquiry INQ-36F7E4 owner emails failed, and there is no retry or outbox, so those notifications are lost for good. The failure is recorded and shown in the admin order dialog."},
+      {"endpoint": "core.current_member/_clerk_user", "issue": "The sync requests.get to the Clerk API runs inside an async dependency (first login only), which blocks the event loop. Use httpx.AsyncClient or asyncio.to_thread. Same for the sync init_storage() on a cold key."},
+      {"endpoint": "POST /api/orders (preorder daily_capacity)", "issue": "The capacity check is aggregate-then-insert and not atomic, so concurrent pre-orders can exceed daily_capacity."},
+      {"endpoint": "PUT /api/admin/settings", "issue": "Body is a raw dict with no Pydantic model (manual validation only)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Cart sheet subtotal", "issue": "Was stale or ₱0.00 because of the backend image event-loop blocking (fixed). Also, while a validate is in flight the old subtotal stays visible with no loading indicator.", "affected_selectors": ["[data-testid=cart-subtotal]"]}
+    ],
+    "design_issues": [
+      {"screen": "Inquiry form, checkout preorder date, admin orders/sales date filters", "issues": ["Uses the native <input type=date> instead of a shadcn Calendar/Popover"]},
+      {"screen": "Admin ProductEditor", "issues": ["Category and Ordering type use the native <select> instead of a shadcn Select"]},
+      {"screen": "Footer Services", "issues": ["Lists 'Delivery · Contactless delivery' even though both are disabled online (only a small caveat line)"]},
+      {"screen": "Admin Sales chart", "issues": ["With a single day of data, the bar fills about 40% of the chart width (cosmetic)"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_nasneq_api.py", "/app/backend/tests/conftest.py", "/app/backend/tests/clerk_ticket.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Keep the asyncio.to_thread fix in server.py image route; audit other sync IO in async paths (_clerk_user, init_storage)",
+    "Add retry/backoff or a persisted outbox + admin 'resend' for failed (429) owner/customer emails",
+    "Make preorder daily capacity reservation atomic (e.g. a per-date counter doc with conditional $inc)",
+    "Optional: replace native date inputs/selects with shadcn components; show only enabled services in the footer"
+  ],
+  "critical_code_review_comments": [
+    "server.py image(): blocking IO in async handler (fixed)",
+    "admin.py analytics loads up to 20000 orders into memory per request; fine for MVP but consider aggregation",
+    "Order ref uses token_hex(2) (65k/day) with a unique index; a collision raises an unhandled DuplicateKeyError branch that looks for the idempotency_key, so it returns 500 'Could not create the order'. Retry ref generation instead",
+    "pytest: run with -n 0 (the xdist parallel workers share the module cleanup fixture)"
+  ],
+  "updated_files": ["/app/backend/server.py (asyncio import + to_thread for get_object)", "/app/backend/tests/conftest.py", "/app/backend/tests/test_nasneq_api.py", "/app/backend/tests/clerk_ticket.py"],
+  "success_rate": {"backend": "100% (17/17) after the fix", "frontend": "100% of tested flows after the backend fix"},
+  "test_credentials": "Used /app/memory/test_credentials.md users (admin owner+clerk_test@example.com, customer jane+clerk_test@example.com); not modified or deleted",
+  "seed_data_creation": "None kept. Test orders/inquiries/stock_moves/image_draft deleted; products restored from snapshot (Classic price 50 + original image, Iced Americano track_stock off, Blueberry Cheesecake price null/preorder disabled); settings delivery disabled, fee null; notify_email restored to the owner; jane favorites reset to []",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend/tests && python -m pytest -n 0 test_nasneq_api.py. The fixture temporarily sets notify_email to delivered@resend.dev to avoid owner emails, then restores it. Get a UI admin login with: python clerk_ticket.py admin|customer (prints a sign-in URL, single use). The email service is currently rate-limited (429).",
+  "rca of the issue": "Cart subtotal stale/₱0: CartSheet's useCartCheck posts /cart/validate on each cart change. The backend image route did a synchronous requests.get to object storage inside async def, which serialized the event loop, so with ~49 menu images queued every validate response took 12-15s. Repro: fire 20 parallel /api/images requests, then time /api/cart/validate (12.7s). Mitigation applied: await asyncio.to_thread(get_object, path), giving 0.39s."
+}
