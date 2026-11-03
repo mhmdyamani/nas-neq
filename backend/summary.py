@@ -68,7 +68,7 @@ def _manila_report_day() -> str:
     return (now - timedelta(days=1) if now.hour < 12 else now).date().isoformat()
 
 
-@summary_router.post("/cron/daily-summary")
+@summary_router.api_route("/cron/daily-summary", methods=["GET", "POST"])
 async def cron_daily_summary(request: Request, bg: BackgroundTasks):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     secret = os.environ.get("WEBHOOK_CRON_SECRET", "")

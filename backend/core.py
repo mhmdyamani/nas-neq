@@ -16,7 +16,8 @@ import requests
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import ReturnDocument
+from pymongo import MongoClient, ReturnDocument
+from bson import Binary
 from PIL import Image
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -106,36 +107,32 @@ async def optional_member(request: Request):
     return await current_member({"user_id": claims["sub"]})
 
 
-# ---------------- Object storage ----------------
-STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
-STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
-_storage_key = None
+# ---------------- Image storage (your own MongoDB, no Emergent) ----------------
+_sync_images = None
+
+
+def _images():
+    global _sync_images
+    if _sync_images is None:
+        _sync_images = MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]].images
+    return _sync_images
 
 
 def init_storage(force: bool = False):
-    global _storage_key
-    if _storage_key and not force:
-        return _storage_key
-    resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": os.environ["EMERGENT_LLM_KEY"]}, timeout=30)
-    resp.raise_for_status()
-    _storage_key = resp.json()["storage_key"]
-    return _storage_key
+    return True
 
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
-    resp = requests.put(f"{STORAGE_URL}/objects/{path}",
-                        headers={"X-Storage-Key": init_storage(), "Content-Type": content_type}, data=data, timeout=120)
-    if resp.status_code == 404:
-        resp = requests.put(f"{STORAGE_URL}/objects/{path}",
-                            headers={"X-Storage-Key": init_storage(True), "Content-Type": content_type}, data=data, timeout=120)
-    resp.raise_for_status()
-    return resp.json()
+    _images().replace_one({"path": path},
+                          {"path": path, "data": Binary(data), "content_type": content_type}, upsert=True)
+    return {"path": path}
 
 
 def get_object(path: str):
-    resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": init_storage()}, timeout=60)
-    resp.raise_for_status()
-    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+    doc = _images().find_one({"path": path})
+    if not doc:
+        raise FileNotFoundError(path)
+    return bytes(doc["data"]), doc.get("content_type", "application/octet-stream")
 
 
 def store_image(raw: bytes, folder: str) -> dict:
@@ -156,10 +153,10 @@ def store_image(raw: bytes, folder: str) -> dict:
     return {"image_path": out["main"], "thumb_path": out["thumb"]}
 
 
-# ---------------- Email (Emergent managed Resend) ----------------
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"
-EMAIL_KEY = os.environ["EMERGENT_EMAIL_KEY"]
+# ---------------- Email (Resend) ----------------
+RESEND_API_KEY = os.environ["RESEND_API_KEY"]
 EMAIL_FROM_NAME = os.environ["EMAIL_FROM_NAME"]
+EMAIL_FROM_ADDR = os.environ.get("EMAIL_FROM_ADDR", "onboarding@resend.dev")
 APP_PUBLIC_URL = os.environ["APP_PUBLIC_URL"].rstrip("/")
 
 _SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
@@ -241,8 +238,10 @@ async def send_email(*, to: str, subject: str, html: str) -> dict:
         _assert_safe_email(subject, html)
         for attempt in range(4):
             async with httpx.AsyncClient(timeout=30) as c:
-                resp = await c.post(f"{EMAIL_BASE_URL}/api/v1/email/send", headers={"X-Email-Key": EMAIL_KEY},
-                                    json={"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME})
+                resp = await c.post("https://api.resend.com/emails",
+                                    headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                                    json={"from": f"{EMAIL_FROM_NAME} <{EMAIL_FROM_ADDR}>", "to": [to],
+                                          "subject": subject, "html": html})
             if resp.status_code != 429 or attempt == 3:
                 break
             await asyncio.sleep(5 * (attempt + 1) ** 2)

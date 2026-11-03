@@ -6,13 +6,15 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, BackgroundTasks, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 import os
 
 from core import (db, client, now_iso, new_id, current_member, optional_member, init_storage, get_object,
-                  public_product, product_status, get_settings, send_email, email_template, MANILA, logger)
+                  public_product, product_status, get_settings, send_email, email_template, MANILA, logger,
+                  APP_PUBLIC_URL)
 from seed import seed, CATEGORIES
 
 try:
@@ -60,6 +62,9 @@ async def public_settings():
 
 @api.get("/images/{path:path}")
 async def image(path: str):
+    if path.startswith("static/") and ".." not in path:
+        return RedirectResponse(f"{APP_PUBLIC_URL}/menu-photos/{path[7:]}", status_code=302,
+                                headers={"Cache-Control": "public, max-age=86400"})
     if not path.startswith("nasneq/") or ".." in path:
         raise HTTPException(404)
     if not await db.products.find_one({"$or": [{"image_path": path}, {"thumb_path": path}]}) and \
@@ -423,6 +428,7 @@ app.include_router(summary_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
 
+
 _ready = False
 
 
@@ -433,6 +439,8 @@ async def ensure_ready(request, call_next):
         await seed()
         _ready = True
     return await call_next(request)
+
+
 @app.on_event("startup")
 async def startup():
     await seed()

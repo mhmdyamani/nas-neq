@@ -1,4 +1,5 @@
 import os
+import re
 from core import db, now_iso, new_id
 
 CATEGORIES = [
@@ -110,3 +111,11 @@ async def seed():
     if await db.flags.count_documents({}) == 0:
         await db.flags.insert_many([{"id": new_id(), "topic": t, "detail": d, "resolved": False,
                                      "resolution": "", "created_at": now_iso()} for t, d in FLAGS])
+    # Menu photos that ship with the website (frontend/public/menu-photos)
+    for items in MENU.values():
+        for it in items:
+            slug = re.sub(r"[^a-z0-9]+", "-", it[0].lower()).strip("-")
+            await db.products.update_one(
+                {"name": it[0], "image_path": None},
+                {"$set": {"image_path": f"static/{slug}-main.webp", "thumb_path": f"static/{slug}-thumb.webp",
+                          "image_source": "ai_illustrative"}})
