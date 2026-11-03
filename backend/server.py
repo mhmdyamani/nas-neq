@@ -429,18 +429,6 @@ app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","), allow_methods=["*"], allow_headers=["*"])
 
 
-_ready = False
-
-
-@app.middleware("http")
-async def ensure_ready(request, call_next):
-    global _ready
-    if not _ready:
-        await seed()
-        _ready = True
-    return await call_next(request)
-
-
 @app.on_event("startup")
 async def startup():
     await seed()

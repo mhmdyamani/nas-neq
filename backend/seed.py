@@ -1,5 +1,8 @@
 import os
 import re
+import uuid
+
+from pymongo.errors import DuplicateKeyError
 from core import db, now_iso, new_id
 
 CATEGORIES = [
@@ -86,9 +89,17 @@ async def seed():
     await db.orders.create_index("idempotency_key", unique=True)
     await db.users.create_index("user_id", unique=True)
     await db.cron_runs.create_index("key", unique=True)
+    for coll in (db.flags, db.settings):
+        try:
+            await coll.create_index("id", unique=True)
+        except Exception:
+            pass
     await db.settings.update_one({"id": "main", "daily_summary": {"$exists": False}}, {"$set": {"daily_summary": True}})
     if not await db.settings.find_one({"id": "main"}):
-        await db.settings.insert_one(default_settings())
+        try:
+            await db.settings.insert_one(default_settings())
+        except DuplicateKeyError:
+            pass
     if await db.products.count_documents({}) == 0:
         docs, sort = [], 0
         cats = {c["slug"]: c for c in CATEGORIES}
@@ -107,10 +118,20 @@ async def seed():
                     "preorder": {"enabled": False, "lead_days": None, "max_qty": None, "daily_capacity": None},
                     "created_at": now_iso(), "updated_at": now_iso(),
                 })
-        await db.products.insert_many(docs)
+        for doc in docs:
+            doc["id"] = str(uuid.uuid5(uuid.NAMESPACE_DNS, "nasneq-product-" + doc["name"]))
+            try:
+                await db.products.update_one({"id": doc["id"]}, {"$setOnInsert": doc}, upsert=True)
+            except DuplicateKeyError:
+                pass
     if await db.flags.count_documents({}) == 0:
-        await db.flags.insert_many([{"id": new_id(), "topic": t, "detail": d, "resolved": False,
-                                     "resolution": "", "created_at": now_iso()} for t, d in FLAGS])
+        for t, det in FLAGS:
+            fid = str(uuid.uuid5(uuid.NAMESPACE_DNS, "nasneq-flag-" + t + det[:40]))
+            try:
+                await db.flags.update_one({"id": fid}, {"$setOnInsert": {"id": fid, "topic": t, "detail": det,
+                                          "resolved": False, "resolution": "", "created_at": now_iso()}}, upsert=True)
+            except DuplicateKeyError:
+                pass
     # Menu photos that ship with the website (frontend/public/menu-photos)
     for items in MENU.values():
         for it in items:
