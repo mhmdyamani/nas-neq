@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 
+from pymongo import UpdateOne
 from pymongo.errors import DuplicateKeyError
 from core import db, now_iso, new_id
 
@@ -81,7 +82,7 @@ def default_settings():
     }
 
 
-async def seed():
+async def _seed_full():
     await db.products.create_index("id", unique=True)
     await db.orders.create_index("id", unique=True)
     await db.orders.create_index("ref", unique=True)
@@ -132,11 +133,23 @@ async def seed():
                                           "resolved": False, "resolution": "", "created_at": now_iso()}}, upsert=True)
             except DuplicateKeyError:
                 pass
-    # Menu photos that ship with the website (frontend/public/menu-photos)
+    # Menu photos that ship with the website (frontend/public/menu-photos): one batched call
+    ops = []
     for items in MENU.values():
         for it in items:
             slug = re.sub(r"[^a-z0-9]+", "-", it[0].lower()).strip("-")
-            await db.products.update_one(
-                {"name": it[0], "image_path": None},
-                {"$set": {"image_path": f"static/{slug}-main.webp", "thumb_path": f"static/{slug}-thumb.webp",
-                          "image_source": "ai_illustrative"}})
+            ops.append(UpdateOne({"name": it[0], "image_path": None},
+                                 {"$set": {"image_path": f"static/{slug}-main.webp",
+                                           "thumb_path": f"static/{slug}-thumb.webp",
+                                           "image_source": "ai_illustrative"}}))
+    if ops:
+        await db.products.bulk_write(ops, ordered=False)
+
+
+async def seed():
+    """Runs the full setup once; afterwards a single quick check keeps cold starts fast."""
+    s = await db.settings.find_one({"id": "main"}, {"seed_version": 1})
+    if s and s.get("seed_version") == 2:
+        return
+    await _seed_full()
+    await db.settings.update_one({"id": "main"}, {"$set": {"seed_version": 2}})

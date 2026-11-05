@@ -431,7 +431,10 @@ app.add_middleware(CORSMiddleware, allow_credentials=True,
 
 @app.on_event("startup")
 async def startup():
-    await seed()
+    try:
+        await seed()
+    except Exception as e:  # a slow or failed setup must never take the whole site down
+        logger.error(f"Seed failed: {e}")
     try:
         init_storage()
     except Exception as e:
