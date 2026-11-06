@@ -1,4 +1,5 @@
 {
+  "regions": ["iad1"],
   "builds": [{ "src": "server.py", "use": "@vercel/python" }],
   "routes": [{ "src": "/(.*)", "dest": "server.py" }],
   "crons": [{ "path": "/api/cron/daily-summary", "schedule": "30 16 * * *" }]
